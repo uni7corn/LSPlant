@@ -1,38 +1,51 @@
-#pragma once
+module;
 
-#include "art/mirror/class.hpp"
-#include "common.hpp"
+#include <atomic>
+#include <string>
+#include <memory>
 
-namespace lsplant::art {
+#include "logging.hpp"
 
+export module lsplant:art_method;
+
+import :common;
+import hook_helper;
+
+export namespace lsplant::art {
 class ArtMethod {
-    CREATE_FUNC_SYMBOL_ENTRY(std::string, PrettyMethod, ArtMethod *thiz, bool with_signature) {
-        if (thiz == nullptr) [[unlikely]]
-            return "null";
-        else if (PrettyMethodSym) [[likely]]
-            return PrettyMethodSym(thiz, with_signature);
-        else
-            return "null sym";
+    inline static auto PrettyMethod_ =
+            "_ZN3art9ArtMethod12PrettyMethodEPS0_b"_sym.as<std::string(ArtMethod::*)(bool)>;
+
+    inline static auto PrettyMethodStatic_ =
+            "_ZN3art12PrettyMethodEPNS_9ArtMethodEb"_sym.as<std::string(ArtMethod *thiz, bool with_signature)>;
+
+    inline static auto PrettyMethodMirror_ =
+            "_ZN3art12PrettyMethodEPNS_6mirror9ArtMethodEb"_sym.as<std::string(ArtMethod *thiz, bool with_signature)>;
+
+    inline static auto GetMethodShortyL_ =
+            "_ZN3artL15GetMethodShortyEP7_JNIEnvP10_jmethodID"_sym.as<const char *(JNIEnv *env, jmethodID method)>;
+
+    inline static auto GetMethodShorty_ =
+            "_ZN3art15GetMethodShortyEP7_JNIEnvP10_jmethodID"_sym.as<const char *(JNIEnv *env, jmethodID mid)>;
+
+    inline static auto ThrowInvocationTimeError_ =
+            "_ZN3art9ArtMethod24ThrowInvocationTimeErrorEv"_sym.as<void(ArtMethod::*)()>;
+
+    inline static auto art_interpreter_to_compiled_code_bridge_ =
+            "artInterpreterToCompiledCodeBridge"_sym.as<void()>;
+
+    inline void ThrowInvocationTimeError() {
+        if (ThrowInvocationTimeError_) {
+            [[likely]] ThrowInvocationTimeError_(this);
+        }
     }
-
-    CREATE_MEM_FUNC_SYMBOL_ENTRY(void, ThrowInvocationTimeError, ArtMethod *thiz) {
-        if (thiz && ThrowInvocationTimeErrorSym) [[likely]]
-            return ThrowInvocationTimeErrorSym(thiz);
-    }
-
-    CREATE_FUNC_SYMBOL_ENTRY(const char *, GetMethodShorty, JNIEnv *env, jmethodID mid) {
-        if (GetMethodShortySym) [[likely]]
-            return GetMethodShortySym(env, mid);
-        return nullptr;
-    }
-
-    CREATE_FUNC_SYMBOL_ENTRY(void, art_interpreter_to_compiled_code_bridge) {}
-
-    inline void ThrowInvocationTimeError() { ThrowInvocationTimeError(this); }
 
 public:
     inline static const char *GetMethodShorty(JNIEnv *env, jobject method) {
-        return GetMethodShorty(env, env->FromReflectedMethod(method));
+        if (GetMethodShortyL_) {
+            return GetMethodShortyL_(env, env->FromReflectedMethod(method));
+        }
+        return GetMethodShorty_(env, env->FromReflectedMethod(method));
     }
 
     void SetNonCompilable() {
@@ -78,6 +91,18 @@ public:
         SetAccessFlags(access_flags);
     }
 
+    void SetNative() {
+        auto access_flags = GetAccessFlags();
+        access_flags |= kAccNative;
+        SetAccessFlags(access_flags);
+    }
+
+    void SetNonNative() {
+        auto access_flags = GetAccessFlags();
+        access_flags &= ~kAccNative;
+        SetAccessFlags(access_flags);
+    }
+
     bool IsPrivate() { return GetAccessFlags() & kAccPrivate; }
     bool IsProtected() { return GetAccessFlags() & kAccProtected; }
     bool IsPublic() { return GetAccessFlags() & kAccPublic; }
@@ -94,7 +119,7 @@ public:
         if (interpreter_entry_point_offset) [[unlikely]] {
             *reinterpret_cast<void **>(reinterpret_cast<uintptr_t>(this) +
                                        interpreter_entry_point_offset) =
-                reinterpret_cast<void *>(art_interpreter_to_compiled_code_bridgeSym);
+                reinterpret_cast<void *>(&art_interpreter_to_compiled_code_bridge_);
         }
     }
 
@@ -123,12 +148,33 @@ public:
     }
 
     std::string PrettyMethod(bool with_signature = true) {
-        return PrettyMethod(this, with_signature);
+        if (PrettyMethod_) [[likely]]
+            return PrettyMethod_(this, with_signature);
+        if (PrettyMethodStatic_) return PrettyMethodStatic_(this, with_signature);
+        if (PrettyMethodMirror_) return PrettyMethodMirror_(this, with_signature);
+        return "null sym";
     }
 
     mirror::Class *GetDeclaringClass() {
         return reinterpret_cast<mirror::Class *>(*reinterpret_cast<uint32_t *>(
             reinterpret_cast<uintptr_t>(this) + declaring_class_offset));
+    }
+
+    std::unique_ptr<ArtMethod> Clone() {
+        auto *method = reinterpret_cast<ArtMethod*>(::operator new(art_method_size));
+        method->CopyFrom(this);
+        return std::unique_ptr<ArtMethod>(method);
+    }
+
+    void BackupTo(ArtMethod *backup) {
+        SetNonCompilable();
+
+        // copy after setNonCompilable
+        backup->CopyFrom(this);
+
+        ClearFastInterpretFlag();
+
+        if (!backup->IsStatic()) backup->SetPrivate();
     }
 
     static art::ArtMethod *FromReflectedMethod(JNIEnv *env, jobject method) {
@@ -221,8 +267,8 @@ public:
                     env,
                     JNI_GetObjectField(
                         env,
-                        env->ToReflectedField(executable,
-                                              JNI_GetFieldID(env, executable, name, sig), false),
+                        JNI_ToReflectedField(env, executable,
+                                             JNI_GetFieldID(env, executable, name, sig), false),
                         art_field_field),
                     field_offset);
             };
@@ -249,17 +295,12 @@ public:
         }
         if (sdk_int < __ANDROID_API_Q__) kAccFastInterpreterToInterpreterInvoke = 0;
 
-        if (!RETRIEVE_FUNC_SYMBOL(GetMethodShorty,
-                                  "_ZN3artL15GetMethodShortyEP7_JNIEnvP10_jmethodID", true) &&
-            !RETRIEVE_FUNC_SYMBOL(GetMethodShorty,
-                                  "_ZN3art15GetMethodShortyEP7_JNIEnvP10_jmethodID")) {
+        if (!handler(GetMethodShortyL_, true, GetMethodShorty_)) {
             LOGE("Failed to find GetMethodShorty");
             return false;
         }
 
-        !RETRIEVE_FUNC_SYMBOL(PrettyMethod, "_ZN3art9ArtMethod12PrettyMethodEPS0_b") &&
-            !RETRIEVE_FUNC_SYMBOL(PrettyMethod, "_ZN3art12PrettyMethodEPNS_9ArtMethodEb") &&
-            !RETRIEVE_FUNC_SYMBOL(PrettyMethod, "_ZN3art12PrettyMethodEPNS_6mirror9ArtMethodEb");
+        handler(PrettyMethod_, PrettyMethodStatic_, PrettyMethodMirror_);
 
         if (sdk_int <= __ANDROID_API_O__) [[unlikely]] {
             auto abstract_method_error = JNI_FindClass(env, "java/lang/AbstractMethodError");
@@ -274,9 +315,9 @@ public:
                     LOGE("Failed to find Executable.getName");
                     return false;
                 }
-                RETRIEVE_MEM_FUNC_SYMBOL(ThrowInvocationTimeError, "_ZN3art9ArtMethod24ThrowInvocationTimeErrorEv");
+                handler(ThrowInvocationTimeError_);
                 auto abstract_method = FromReflectedMethod(
-                    env, JNI_ToReflectedMethod(env, executable, executable_get_name, false));
+                    env, JNI_ToReflectedMethod(env, executable, executable_get_name, false).get());
                 uint32_t access_flags = abstract_method->GetAccessFlags();
                 abstract_method->SetAccessFlags(access_flags | kAccDefaultConflict);
                 abstract_method->ThrowInvocationTimeError();
@@ -293,8 +334,7 @@ public:
             kAccCompileDontBother = 0;
         }
         if (sdk_int <= __ANDROID_API_M__) [[unlikely]] {
-            if (!RETRIEVE_FUNC_SYMBOL(art_interpreter_to_compiled_code_bridge,
-                                      "artInterpreterToCompiledCodeBridge")) {
+            if (!handler(art_interpreter_to_compiled_code_bridge_)) {
                 return false;
             }
             if (sdk_int >= __ANDROID_API_L_MR1__) {
