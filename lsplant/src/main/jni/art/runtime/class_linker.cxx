@@ -36,9 +36,6 @@ private:
     inline static auto GetOptimizedCodeFor_ =
             "_ZN3art15instrumentationL19GetOptimizedCodeForEPNS_9ArtMethodE"_sym.as<void *(ArtMethod *)>;
 
-    inline static auto GetRuntimeQuickGenericJniStub_=
-            "_ZNK3art11ClassLinker29GetRuntimeQuickGenericJniStubEv"_sym.as<void *(ClassLinker::*)()>;
-
     inline static art::ArtMethod *MayGetBackup(art::ArtMethod *method) {
         if (auto backup = IsHooked(method); backup) [[unlikely]] {
             method = backup;
