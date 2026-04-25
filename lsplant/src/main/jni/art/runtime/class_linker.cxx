@@ -136,12 +136,95 @@ private:
         };
 
     inline static auto FixupStaticTrampolinesWithThread_ =
-        "_ZN3art11ClassLinker22FixupStaticTrampolinesEPNS_6ThreadENS_6ObjPtrINS_6mirror5ClassEEE"_sym.hook->*[]
-        <MemBackup auto backup>
-        (ClassLinker *thiz, Thread *self, ObjPtr<mirror::Class> mirror_class) static -> void {
-            backup(thiz, self, mirror_class);
-            RestoreBackup(mirror_class->GetClassDef(), self);
-        };
+        "_ZN3art11ClassLinker22FixupStaticTrampolinesEPNS_6ThreadENS_6ObjPtrINS_6mirror5ClassEEE"_sym
+            .hook
+            ->*[] consteval {
+                    if constexpr (is_arch_v<Arch::kX86>) {
+                        return []<MemBackup auto backup> [[gnu::naked]] (
+                                   ClassLinker * thiz, Thread * self,
+                                   ObjPtr<mirror::Class> mirror_class) static {
+                            asm volatile(R"(
+                                pushl   %eax
+                                pushl   %ebx
+                                pushl   %ecx
+                                pushl   %edx
+                                pushl   %esi
+                                pushl   %edi
+                                pushl   %ebp
+
+                                calll   1f
+                            1:
+                                popl    %eax
+                                addl    $_GLOBAL_OFFSET_TABLE_+[.-1b], %eax
+                                movl    lsplant_bridge_fixup_static_trampolines@GOT(%eax), %eax
+                                movl    (%eax), %eax
+
+                                movl    36(%esp), %ebx
+                                movl    %gs:0, %edx
+                                movl    28(%edx), %edx
+                                cmpl    %ebx, %edx
+                                je      .L.stdcall
+
+                                movl    32(%esp), %ebx
+                                pushl   %ebx
+                                calll   *%eax
+                                addl    $4, %esp
+                                movl    12(%esp), %ebx
+                                movl    32(%esp), %ecx
+                                jmp     .L.restore_backup
+
+                            .L.stdcall:
+                                movl    40(%esp), %ebx
+                                pushl   %ebx
+                                movl    40(%esp), %ebx
+                                pushl   %ebx
+                                movl    40(%esp), %ebx
+                                pushl   %ebx
+                                calll   *%eax
+                                addl    $12, %esp
+                                movl    36(%esp), %ebx
+                                movl    40(%esp), %ecx
+
+                            .L.restore_backup:
+                                calll   2f
+                            2:
+                                popl    %eax
+                                addl    $_GLOBAL_OFFSET_TABLE_+[.-2b], %eax
+                                movl    lsplant_bridge_restore_backup@GOT(%eax), %eax
+                                movl    (%eax), %eax
+                                pushl   %ecx
+                                pushl   %ebx
+                                calll   *%eax
+                                addl    $8, %esp
+
+                                popl    %ebp
+                                popl    %edi
+                                popl    %esi
+                                popl    %edx
+                                popl    %ecx
+                                popl    %ebx
+                                popl    %eax
+                                retl
+
+                                .bss
+                                .global lsplant_bridge_fixup_static_trampolines
+                                .hidden lsplant_bridge_fixup_static_trampolines
+                                .common lsplant_bridge_fixup_static_trampolines, 4, 4
+                                .global lsplant_bridge_restore_backup
+                                .hidden lsplant_bridge_restore_backup
+                                .common lsplant_bridge_restore_backup, 4, 4
+                                .previous
+                            )");
+                        };
+                    } else {
+                        return []<MemBackup auto backup>(
+                                   ClassLinker *thiz, Thread *self,
+                                   ObjPtr<mirror::Class> mirror_class) static -> void {
+                            backup(thiz, self, mirror_class);
+                            RestoreBackup(mirror_class->GetClassDef(), self);
+                        };
+                    }
+                }();
 
     inline static auto FixupStaticTrampolinesRaw_ =
         "_ZN3art11ClassLinker22FixupStaticTrampolinesEPNS_6mirror5ClassE"_sym.hook->*[]
@@ -225,9 +308,23 @@ public:
             handler(ShouldUseInterpreterEntrypoint_);
         }
 
-        if (!handler(FixupStaticTrampolinesWithThread_, FixupStaticTrampolines_,
-                          FixupStaticTrampolinesRaw_)) {
-            return false;
+        if constexpr (is_arch_v<Arch::kX86>) {
+            if (handler(FixupStaticTrampolinesWithThread_)) [[likely]] {
+                extern void (*fixup_static_trampolines)(
+                    ClassLinker *, Thread *,
+                    ObjPtr<mirror::Class>) asm("lsplant_bridge_fixup_static_trampolines");
+                extern void (*restore_backup)(
+                    Thread *, ObjPtr<mirror::Class>) asm("lsplant_bridge_restore_backup");
+                fixup_static_trampolines = &FixupStaticTrampolinesWithThread_;
+                restore_backup = +[](Thread *self, ObjPtr<mirror::Class> mirror_class) {
+                    RestoreBackup(mirror_class->GetClassDef(), self);
+                };
+            } else {
+                handler(FixupStaticTrampolines_, FixupStaticTrampolinesRaw_);
+            }
+        } else {
+            handler(FixupStaticTrampolinesWithThread_, FixupStaticTrampolines_,
+                    FixupStaticTrampolinesRaw_);
         }
 
         if (!handler(RegisterNativeClassLinker_, RegisterNative_, RegisterNativeFast_,
