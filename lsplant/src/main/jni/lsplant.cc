@@ -146,7 +146,7 @@ bool InitJNI(JNIEnv *env) {
         executable = JNI_NewGlobalRef(env, JNI_FindClass(env, "java/lang/reflect/AbstractMethod"));
     }
     if (!executable) {
-        LOGE("Failed to found Executable/AbstractMethod");
+        LOGE("Failed to find Executable/AbstractMethod");
         return false;
     }
 

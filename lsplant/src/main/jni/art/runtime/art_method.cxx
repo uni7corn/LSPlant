@@ -229,7 +229,7 @@ public:
             executable = JNI_FindClass(env, "java/lang/reflect/ArtMethod");
         }
         if (!executable) {
-            LOGE("Failed to found Executable/AbstractMethod/ArtMethod");
+            LOGE("Failed to find Executable/AbstractMethod/ArtMethod");
             return false;
         }
 
@@ -243,7 +243,7 @@ public:
 
         auto throwable = JNI_FindClass(env, "java/lang/Throwable");
         if (!throwable) {
-            LOGE("Failed to found Executable");
+            LOGE("Failed to find Throwable");
             return false;
         }
         auto clazz = JNI_FindClass(env, "java/lang/Class");
