@@ -34,7 +34,12 @@ private:
             "art_quick_to_interpreter_bridge"_sym.as<void(void *)>;
 
     inline static auto GetOptimizedCodeFor_ =
-            "_ZN3art15instrumentationL19GetOptimizedCodeForEPNS_9ArtMethodE"_sym.as<void *(ArtMethod *)>;
+        "_ZN3art15instrumentation15Instrumentation19GetOptimizedCodeForEPNS_9ArtMethodE"_sym
+            .as<void *(ArtMethod *)>;
+
+    inline static auto GetOptimizedCodeForL_ =
+        "_ZN3art15instrumentationL19GetOptimizedCodeForEPNS_9ArtMethodE"_sym
+            .as<void *(ArtMethod *)>;
 
     inline static art::ArtMethod *MayGetBackup(art::ArtMethod *method) {
         if (auto backup = IsHooked(method); backup) [[unlikely]] {
@@ -163,6 +168,55 @@ private:
             RestoreBackup(nullptr, self);
         };
 
+    static void *GetOptimizedCodeFor(ArtMethod *method) {
+        if constexpr (is_arch_v<Arch::kX86>) {
+            extern void *(*get_optimized_code_for)(ArtMethod *)asm(
+                "lsplant_bridge_get_optimized_code_for");
+            get_optimized_code_for =
+                GetOptimizedCodeFor_ ? &GetOptimizedCodeFor_ : &GetOptimizedCodeForL_;
+            return [] [[gnu::naked]] (ArtMethod * method) static -> void * {
+                asm volatile(R"(
+                    pushl   %ebx
+                    pushl   %ecx
+                    pushl   %edx
+                    pushl   %esi
+                    pushl   %edi
+                    pushl   %ebp
+
+                    calll   1f
+                1:
+                    popl    %eax
+                    addl    $_GLOBAL_OFFSET_TABLE_+[.-1b], %eax
+                    movl    lsplant_bridge_get_optimized_code_for@GOT(%eax), %eax
+                    movl    (%eax), %eax
+
+                    movl    28(%esp), %ecx
+                    pushl   %ecx
+                    calll   *%eax
+                    addl    $4, %esp
+
+                    popl    %ebp
+                    popl    %edi
+                    popl    %esi
+                    popl    %edx
+                    popl    %ecx
+                    popl    %ebx
+                    retl
+
+                    .bss
+                    .global lsplant_bridge_get_optimized_code_for
+                    .hidden lsplant_bridge_get_optimized_code_for
+                    .common lsplant_bridge_get_optimized_code_for, 4, 4
+                    .previous
+                )");
+            }(method);
+        } else if (GetOptimizedCodeFor_) [[likely]] {
+            return GetOptimizedCodeFor_(method);
+        } else {
+            return GetOptimizedCodeForL_(method);
+        }
+    }
+
 public:
     static bool Init(JNIEnv *env, const HookHandler &handler) {
         int sdk_int = GetAndroidApiLevel();
@@ -191,7 +245,7 @@ public:
         }
 
         if (!handler(SetEntryPointsToInterpreter_)) [[likely]] {
-            if (handler(GetOptimizedCodeFor_, true)) [[likely]] {
+            if (handler(GetOptimizedCodeFor_, GetOptimizedCodeForL_, true)) [[likely]] {
                 auto obj = JNI_FindClass(env, "java/lang/Object");
                 if (!obj) {
                     return false;
@@ -205,12 +259,12 @@ public:
                 JavaDebuggableGuard guard;
                 // just in case
                 dummy->SetNonNative();
-                art_quick_to_interpreter_bridge_ = GetOptimizedCodeFor_(dummy.get());
+                art_quick_to_interpreter_bridge_ = GetOptimizedCodeFor(dummy.get());
             } else if (!handler(art_quick_to_interpreter_bridge_)) [[unlikely]] {
                 return false;
             }
+            LOGD("art_quick_to_interpreter_bridge = %p", &art_quick_to_interpreter_bridge_);
         }
-        LOGD("art_quick_to_interpreter_bridge = %p", &art_quick_to_interpreter_bridge_);
         return true;
     }
 
