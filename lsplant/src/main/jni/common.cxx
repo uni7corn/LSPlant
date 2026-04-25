@@ -69,13 +69,12 @@ constexpr inline auto RoundUpTo(T v, size_t size) {
 }
 
 [[gnu::const]] inline auto GetAndroidApiLevel() {
-    static auto kApiLevel = []() {
+    static auto kApiLevel = [] {
         std::array<char, PROP_VALUE_MAX> prop_value;
         __system_property_get("ro.build.version.sdk", prop_value.data());
-        int base = atoi(prop_value.data());
-        __system_property_get("ro.build.version.preview_sdk", prop_value.data());
-        return base + atoi(prop_value.data());
+        return atoi(prop_value.data());
     }();
+    [[assume(kApiLevel >= __ANDROID_API__)]];
     return kApiLevel;
 }
 
