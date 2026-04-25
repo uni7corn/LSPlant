@@ -7,6 +7,7 @@ module;
 #include <jni.h>
 #include <sys/mman.h>
 #include <sys/system_properties.h>
+#include <unistd.h>
 
 #include <array>
 #include <atomic>
@@ -478,17 +479,17 @@ static_assert(std::atomic_uintptr_t::is_always_lock_free, "Unsupported architect
 std::atomic_uintptr_t trampoline_pool{0};
 std::atomic_flag trampoline_lock{false};
 constexpr size_t kTrampolineSize = RoundUpTo(sizeof(trampoline), kPointerSize);
-constexpr uintptr_t kAddressMask = 0xFFFU;
+const auto kPageSize = static_cast<size_t>(getpagesize());  // assume
+const auto kPageMask = static_cast<uintptr_t>(kPageSize - 1);
 
 void *GenerateTrampolineFor(art::ArtMethod *hook) {
-    static const size_t kPageSize = sysconf(_SC_PAGESIZE);  // assume
     static const size_t kTrampolineNumPerPage = kPageSize / kTrampolineSize;
     unsigned count;
     uintptr_t address;
     while (true) {
         auto tl = Trampoline{.address = trampoline_pool.fetch_add(1, std::memory_order_release)};
         count = kPageSize == 16384 ? tl.count16k : tl.count4k;
-        address = tl.address & ~kAddressMask;
+        address = tl.address & ~kPageMask;
         if (address == 0 || count >= kTrampolineNumPerPage) {
             if (trampoline_lock.test_and_set(std::memory_order_acq_rel)) {
                 trampoline_lock.wait(true, std::memory_order_acquire);
