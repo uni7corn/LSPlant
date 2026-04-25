@@ -12,7 +12,16 @@ import :common;
 import hook_helper;
 
 export namespace lsplant::art {
+
+struct alignas(4) [[gnu::packed]] QuickMethodFrameInfo {
+    [[maybe_unused]] uint32_t frame_size_in_bytes;
+    [[maybe_unused]] uint32_t core_spill_mask;
+    [[maybe_unused]] uint32_t fp_spill_mask;
+};
+
 class ArtMethod {
+    inline static ArtMethod *abstract_method_{};
+
     inline static auto SetNotIntrinsic_ =
         "_ZN3art9ArtMethod15SetNotIntrinsicEv"_sym.as<void (ArtMethod::*)()>;
 
@@ -36,6 +45,15 @@ class ArtMethod {
 
     inline static auto art_interpreter_to_compiled_code_bridge_ =
             "artInterpreterToCompiledCodeBridge"_sym.as<void()>;
+
+    inline static auto GetQuickFrameInfo_ =
+        "_ZN3art9ArtMethod17GetQuickFrameInfoEv"_sym.hook->*
+        []<MemBackup auto backup>(ArtMethod *thiz) static -> QuickMethodFrameInfo {
+        if (backuped_proxy_methods_.contains(thiz)) [[unlikely]] {
+            return backup(abstract_method_);
+        }
+        return backup(thiz);
+    };
 
     inline void ThrowInvocationTimeError() {
         if (ThrowInvocationTimeError_) {
@@ -122,6 +140,7 @@ public:
     bool IsFinal() { return GetAccessFlags() & kAccFinal; }
     bool IsStatic() { return GetAccessFlags() & kAccStatic; }
     bool IsNative() { return GetAccessFlags() & kAccNative; }
+    bool IsAbstract() { return GetAccessFlags() & kAccAbstract; }
     bool IsConstructor() { return GetAccessFlags() & kAccConstructor; }
 
     void CopyFrom(const ArtMethod *other) { memcpy(this, other, art_method_size); }
@@ -348,6 +367,21 @@ public:
                 kAccCompileDontBother = kAccDefaultConflict;
             }
         }
+        if (sdk_int == __ANDROID_API_M__) [[unlikely]] {
+            auto executable_get_name =
+                JNI_GetMethodID(env, executable, "getName", "()Ljava/lang/String;");
+            if (!executable_get_name) {
+                LOGE("Failed to find Executable.getName");
+                return false;
+            }
+            abstract_method_ = FromReflectedMethod(
+                env, JNI_ToReflectedMethod(env, executable, executable_get_name, false).get());
+            if (!abstract_method_ || !abstract_method_->IsAbstract()) [[unlikely]] {
+                LOGW("Abstract method Executable.getName not found");
+            } else if (!handler(GetQuickFrameInfo_)) [[unlikely]] {
+                LOGW("Failed to hook GetQuickFrameInfo, hooking proxy method may crash");
+            }
+        }
         if (sdk_int < __ANDROID_API_N__) {
             kAccCompileDontBother = 0;
         }
@@ -365,13 +399,14 @@ public:
 
     static size_t GetEntryPointOffset() { return entry_point_offset; }
 
-    constexpr static uint32_t kAccPublic = 0x0001;     // class, field, method, ic
-    constexpr static uint32_t kAccPrivate = 0x0002;    // field, method, ic
-    constexpr static uint32_t kAccProtected = 0x0004;  // field, method, ic
-    constexpr static uint32_t kAccStatic = 0x0008;     // field, method, ic
-    constexpr static uint32_t kAccNative = 0x0100;     // method
-    constexpr static uint32_t kAccFinal = 0x0010;      // class, field, method, ic
-    constexpr static uint32_t kAccConstructor = 0x00010000;
+    constexpr static uint32_t kAccPublic = 0x0001;           // class, field, method, ic
+    constexpr static uint32_t kAccPrivate = 0x0002;          // field, method, ic
+    constexpr static uint32_t kAccProtected = 0x0004;        // field, method, ic
+    constexpr static uint32_t kAccStatic = 0x0008;           // field, method, ic
+    constexpr static uint32_t kAccNative = 0x0100;           // method
+    constexpr static uint32_t kAccFinal = 0x0010;            // class, field, method, ic
+    constexpr static uint32_t kAccAbstract = 0x0400;         // class, method, ic
+    constexpr static uint32_t kAccConstructor = 0x00010000;  // method (dex only) <(cl)init>
 
 private:
     inline static jfieldID art_method_field = nullptr;
