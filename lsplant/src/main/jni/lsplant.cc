@@ -59,28 +59,28 @@ inline consteval auto operator""_uarr() {
 }
 
 consteval inline auto GetTrampoline() {
-    if constexpr (kArch == Arch::kArm) {
+    if constexpr (is_arch_v<Arch::kArm>) {
         return std::make_tuple("\x00\x00\x9f\xe5\x00\xf0\x90\xe5\x78\x56\x34\x12"_uarr,
                                // NOLINTNEXTLINE
                                uint8_t{32u}, uintptr_t{8u});
     }
-    if constexpr (kArch == Arch::kArm64) {
+    if constexpr (is_arch_v<Arch::kAArch64>) {
         return std::make_tuple(
             "\x60\x00\x00\x58\x10\x00\x40\xf8\x00\x02\x1f\xd6\x78\x56\x34\x12\x78\x56\x34\x12"_uarr,
             // NOLINTNEXTLINE
             uint8_t{44u}, uintptr_t{12u});
     }
-    if constexpr (kArch == Arch::kX86) {
+    if constexpr (is_arch_v<Arch::kX86>) {
         return std::make_tuple("\xb8\x78\x56\x34\x12\xff\x70\x00\xc3"_uarr,
                                // NOLINTNEXTLINE
                                uint8_t{56u}, uintptr_t{1u});
     }
-    if constexpr (kArch == Arch::kX86_64) {
+    if constexpr (is_arch_v<Arch::kAmd64>) {
         return std::make_tuple("\x48\xbf\x78\x56\x34\x12\x78\x56\x34\x12\xff\x77\x00\xc3"_uarr,
                                // NOLINTNEXTLINE
                                uint8_t{96u}, uintptr_t{2u});
     }
-    if constexpr (kArch == Arch::kRiscv64) {
+    if constexpr (is_arch_v<Arch::kRiscv64>) {
         return std::make_tuple(
             "\x17\x05\x00\x00\x03\x35\x05\x01\x83\x3f\x05\x00\x67\x80\x0f\x00\x78\x56\x34\x12\x78\x56\x34\x12"_uarr,
             // NOLINTNEXTLINE

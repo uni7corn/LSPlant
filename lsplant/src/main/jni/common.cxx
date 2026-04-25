@@ -13,6 +13,7 @@ module;
 export module lsplant:common;
 export import jni_helper;
 export import hook_helper;
+export import type_traits;
 
 export namespace lsplant {
 
@@ -27,30 +28,6 @@ class ClassDef {};
 
 }  // namespace art
 
-enum class Arch {
-    kArm,
-    kArm64,
-    kX86,
-    kX86_64,
-    kRiscv64,
-};
-
-consteval inline Arch GetArch() {
-#if defined(__i386__)
-    return Arch::kX86;
-#elif defined(__x86_64__)
-    return Arch::kX86_64;
-#elif defined(__arm__)
-    return Arch::kArm;
-#elif defined(__aarch64__)
-    return Arch::kArm64;
-#elif defined(__riscv)
-    return Arch::kRiscv64;
-#else
-#error "unsupported architecture"
-#endif
-}
-
 template <class K, class V, class Hash = phmap::priv::hash_default_hash<K>,
           class Eq = phmap::priv::hash_default_eq<K>,
           class Alloc = phmap::priv::Allocator<phmap::priv::Pair<const K, V>>, size_t N = 4>
@@ -60,8 +37,6 @@ template <class T, class Hash = phmap::priv::hash_default_hash<T>,
           class Eq = phmap::priv::hash_default_eq<T>, class Alloc = phmap::priv::Allocator<T>,
           size_t N = 4>
 using SharedHashSet = phmap::parallel_flat_hash_set<T, Hash, Eq, Alloc, N, std::shared_mutex>;
-
-constexpr auto kArch = GetArch();
 
 template <typename T>
 constexpr inline auto RoundUpTo(T v, size_t size) {

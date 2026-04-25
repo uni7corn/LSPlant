@@ -187,7 +187,7 @@ public:
         }
 
         if (sdk_int >= __ANDROID_API_R__) {
-            if constexpr (kArch != Arch::kX86 && kArch != Arch::kX86_64) {
+            if constexpr (!is_arch_v<Arch::kX86, Arch::kAmd64>) {
                 // fixup static trampoline may have been inlined
                 handler(AdjustThreadVisibilityCounter_, MarkVisiblyInitialized_);
             }

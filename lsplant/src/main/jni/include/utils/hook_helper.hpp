@@ -213,11 +213,11 @@ template <FixedString S> constexpr Symbol<S> operator""_sym() {
 }
 
 template<FixedString S, FixedString P>
-consteval auto operator|([[maybe_unused]] Symbol<S> a, [[maybe_unused]] Symbol<P> b) {
-#if defined(__LP64__)
-    return b;
-#else
-    return a;
-#endif
+consteval auto operator|([[maybe_unused]] Symbol<S> lp32, [[maybe_unused]] Symbol<P> lp64) {
+    if constexpr (is_arch_v<Arch::kLP64>) {
+        return lp64;
+    } else {
+        return lp32;
+    }
 }
 }  // namespace lsplant
