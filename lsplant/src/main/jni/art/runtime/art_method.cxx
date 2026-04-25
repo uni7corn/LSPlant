@@ -1,8 +1,8 @@
 module;
 
 #include <atomic>
-#include <string>
 #include <memory>
+#include <string>
 
 #include "logging.hpp"
 
@@ -13,6 +13,9 @@ import hook_helper;
 
 export namespace lsplant::art {
 class ArtMethod {
+    inline static auto SetNotIntrinsic_ =
+        "_ZN3art9ArtMethod15SetNotIntrinsicEv"_sym.as<void (ArtMethod::*)()>;
+
     inline static auto PrettyMethod_ =
             "_ZN3art9ArtMethod12PrettyMethodEPS0_b"_sym.as<std::string(ArtMethod::*)(bool)>;
 
@@ -101,6 +104,16 @@ public:
         auto access_flags = GetAccessFlags();
         access_flags &= ~kAccNative;
         SetAccessFlags(access_flags);
+    }
+
+    void SetNonIntrinsic() {
+        if (SetNotIntrinsic_) [[likely]] {
+            SetNotIntrinsic_(this);
+        } else if (kAccIntrinsic) [[likely]] {
+            auto access_flags = GetAccessFlags();
+            access_flags &= ~kAccIntrinsic;
+            SetAccessFlags(access_flags);
+        }
     }
 
     bool IsPrivate() { return GetAccessFlags() & kAccPrivate; }
@@ -294,6 +307,11 @@ public:
             kAccPreCompiled = 0x00800000;
         }
         if (sdk_int < __ANDROID_API_Q__) kAccFastInterpreterToInterpreterInvoke = 0;
+        if (sdk_int < __ANDROID_API_O__) kAccIntrinsic = 0;
+
+        if (sdk_int >= __ANDROID_API_P__ && !handler(SetNotIntrinsic_)) {
+            LOGW("Failed to find SetNotIntrinsic, use hard-coded kAccIntrinsic instead");
+        }
 
         if (!handler(GetMethodShortyL_, true, GetMethodShorty_)) {
             LOGE("Failed to find GetMethodShorty");
@@ -367,6 +385,7 @@ private:
     inline static uint32_t kAccPreCompiled = 0x00200000;
     inline static uint32_t kAccCompileDontBother = 0x02000000;
     inline static uint32_t kAccDefaultConflict = 0x01000000;
+    inline static uint32_t kAccIntrinsic = 0x80000000;
 };
 
 }  // namespace lsplant::art
